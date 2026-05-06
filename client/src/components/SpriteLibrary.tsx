@@ -116,66 +116,66 @@ export default function SpriteLibrary({
             </div>
 
             <div style={S.modalBody}>
-              <div style={S.modalSection}>
-                <div style={S.modalSectionLabel}>📐 Anchor Sheet (4 angles)</div>
-                <div style={S.anchorWrap} onClick={() => setZoomImg(modalSprite.anchorUrl)}>
-                  <img src={modalSprite.anchorUrl} alt="anchor" style={S.anchorImg} />
-                  <div style={S.zoomHint}>🔍 Click to zoom</div>
-                </div>
+              <div style={S.anchorWrap} onClick={() => setZoomImg(modalSprite.anchorUrl)}>
+                <img src={modalSprite.anchorUrl} alt="anchor" style={S.anchorImg} />
+                <div style={S.zoomHint}>🔍 Click to zoom</div>
               </div>
 
-              {modalSprite.description && (
-                <div style={S.modalSection}>
-                  <div style={S.modalSectionLabel}>📝 Description</div>
-                  <div style={S.modalDesc}>{modalSprite.description}</div>
-                </div>
-              )}
+              <div style={S.modalSide}>
+                {modalSprite.description && (
+                  <div style={S.modalSection}>
+                    <div style={S.modalSectionLabel}>📝 Description</div>
+                    <div style={S.modalDesc}>{modalSprite.description}</div>
+                  </div>
+                )}
 
-              {modalLoading ? (
-                <div style={S.modalLoading}>⏳ Loading layers + cycles…</div>
-              ) : (
-                <>
-                  {modalSprite.layers && modalSprite.layers.length > 0 && (
-                    <div style={S.modalSection}>
-                      <div style={S.modalSectionLabel}>🧩 Paper-Doll Layers ({modalSprite.layers.length})</div>
-                      <div style={S.layerGrid}>
-                        {modalSprite.layers.map((l: any) => (
-                          <div key={l.id} style={S.layerCard} onClick={() => setZoomImg(l.url)}>
-                            <img src={l.url} alt={l.layer_type} style={S.layerImg} />
-                            <div style={S.layerLabel}>{l.layer_type}</div>
-                          </div>
-                        ))}
+                {modalLoading ? (
+                  <div style={S.modalLoading}>⏳ Loading…</div>
+                ) : (
+                  <>
+                    {modalSprite.layers && modalSprite.layers.length > 0 && (
+                      <div style={S.modalSection}>
+                        <div style={S.modalSectionLabel}>🧩 Layers ({modalSprite.layers.length})</div>
+                        <div style={S.layerStrip}>
+                          {modalSprite.layers.map((l: any) => (
+                            <div key={l.id} style={S.layerThumb} onClick={() => setZoomImg(l.url)} title={l.layer_type}>
+                              <img src={l.url} alt={l.layer_type} style={S.layerThumbImg} />
+                              <div style={S.layerThumbLabel}>{l.layer_type}</div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {modalSprite.cycles && modalSprite.cycles.length > 0 && (
-                    <div style={S.modalSection}>
-                      <div style={S.modalSectionLabel}>🎬 Animation Cycles ({modalSprite.cycles.length})</div>
-                      <div style={S.cycleGrid}>
-                        {modalSprite.cycles.map((c: any) => (
-                          <div key={c.id} style={S.cycleCard}>
-                            <div style={S.cycleHead}>{c.cycle_name.toUpperCase()} <span style={S.cycleFrames}>· {c.frame_count} frames</span></div>
-                            {c.gifUrl && (
-                              <img
-                                src={c.gifUrl}
-                                alt={c.cycle_name}
-                                style={S.cycleGif}
-                                onClick={() => setZoomImg(c.gifUrl)}
-                              />
-                            )}
-                            {c.sheetUrl && (
-                              <a href={c.sheetUrl} target="_blank" rel="noreferrer" style={S.cycleSheet}>
-                                Sprite sheet ↗
-                              </a>
-                            )}
-                          </div>
-                        ))}
+                    {modalSprite.cycles && modalSprite.cycles.length > 0 && (
+                      <div style={S.modalSection}>
+                        <div style={S.modalSectionLabel}>🎬 Cycles ({modalSprite.cycles.length})</div>
+                        <div style={S.cycleStrip}>
+                          {modalSprite.cycles.map((c: any) => (
+                            <div key={c.id} style={S.cycleThumb}>
+                              {c.gifUrl && (
+                                <img
+                                  src={c.gifUrl}
+                                  alt={c.cycle_name}
+                                  style={S.cycleThumbImg}
+                                  onClick={() => setZoomImg(c.gifUrl)}
+                                />
+                              )}
+                              <div style={S.cycleThumbLabel}>{c.cycle_name}</div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </>
-              )}
+                    )}
+
+                    {(!modalSprite.layers?.length && !modalSprite.cycles?.length) && (
+                      <div style={S.emptyHint}>
+                        No layers or cycles yet. Click <strong>Use Sprite</strong> to generate animations.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -223,24 +223,24 @@ const S: Record<string, React.CSSProperties> = {
   modalActions: { display: 'flex', gap: 10, alignItems: 'center' },
   modalUseBtn: { background: '#7c4dff', border: 'none', borderRadius: 8, color: '#fff', cursor: 'pointer', padding: '10px 20px', fontSize: 14, fontWeight: 600, letterSpacing: 1 },
   modalCloseBtn: { background: 'none', border: '1px solid #7c4dff40', borderRadius: 8, color: '#b39dff', cursor: 'pointer', padding: '8px 14px', fontSize: 16 },
-  modalBody: { padding: 24, overflowY: 'auto', flex: 1 },
-  modalSection: { marginBottom: 28 },
-  modalSectionLabel: { fontSize: 12, color: '#8888aa', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 },
-  anchorWrap: { position: 'relative', display: 'inline-block', cursor: 'zoom-in', borderRadius: 10, overflow: 'hidden', border: '1px solid #7c4dff30' },
-  anchorImg: { display: 'block', maxWidth: '100%', maxHeight: 600, objectFit: 'contain', imageRendering: 'pixelated', background: '#111128' },
-  zoomHint: { position: 'absolute', bottom: 10, right: 10, background: 'rgba(0,0,0,0.7)', color: '#b39dff', fontSize: 11, padding: '4px 10px', borderRadius: 4 },
-  modalDesc: { color: '#b8b8d4', fontSize: 14, lineHeight: 1.6, background: '#1a1a3a', padding: '12px 16px', borderRadius: 8, border: '1px solid #7c4dff20' },
-  modalLoading: { color: '#7c7ca0', fontSize: 14, textAlign: 'center', padding: 40 },
-  layerGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 },
-  layerCard: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 8, padding: 8, cursor: 'zoom-in', textAlign: 'center' },
-  layerImg: { width: '100%', height: 100, objectFit: 'contain', imageRendering: 'pixelated', background: '#111' },
-  layerLabel: { fontSize: 11, color: '#b39dff', marginTop: 6, textTransform: 'uppercase', letterSpacing: 1 },
-  cycleGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 },
-  cycleCard: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 10, padding: 12 },
-  cycleHead: { fontSize: 12, fontWeight: 700, color: '#b39dff', letterSpacing: 1, marginBottom: 8 },
-  cycleFrames: { color: '#7c7ca0', fontWeight: 400 },
-  cycleGif: { width: '100%', height: 120, objectFit: 'contain', imageRendering: 'pixelated', background: '#111', borderRadius: 6, cursor: 'zoom-in', display: 'block' },
-  cycleSheet: { display: 'inline-block', marginTop: 8, fontSize: 11, color: '#7c4dff', textDecoration: 'none' },
+  modalBody: { padding: 20, flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 20, overflow: 'hidden', minHeight: 0 },
+  modalSide: { display: 'flex', flexDirection: 'column', gap: 18, overflowY: 'auto', minHeight: 0, paddingRight: 4 },
+  modalSection: {},
+  modalSectionLabel: { fontSize: 11, color: '#8888aa', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 },
+  anchorWrap: { position: 'relative', cursor: 'zoom-in', borderRadius: 10, overflow: 'hidden', border: '1px solid #7c4dff30', background: '#111128', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 },
+  anchorImg: { display: 'block', maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain', imageRendering: 'pixelated' },
+  zoomHint: { position: 'absolute', bottom: 10, right: 10, background: 'rgba(0,0,0,0.7)', color: '#b39dff', fontSize: 11, padding: '4px 10px', borderRadius: 4, pointerEvents: 'none' },
+  modalDesc: { color: '#b8b8d4', fontSize: 13, lineHeight: 1.55, background: '#1a1a3a', padding: '10px 14px', borderRadius: 8, border: '1px solid #7c4dff20' },
+  modalLoading: { color: '#7c7ca0', fontSize: 13, textAlign: 'center', padding: 20 },
+  emptyHint: { color: '#7c7ca0', fontSize: 12, fontStyle: 'italic', padding: '8px 0' },
+  layerStrip: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  layerThumb: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 6, padding: 4, cursor: 'zoom-in', textAlign: 'center', width: 70 },
+  layerThumbImg: { width: 60, height: 60, objectFit: 'contain', imageRendering: 'pixelated', background: '#111' },
+  layerThumbLabel: { fontSize: 9, color: '#b39dff', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.5 },
+  cycleStrip: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  cycleThumb: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 6, padding: 4, textAlign: 'center', width: 80 },
+  cycleThumbImg: { width: 70, height: 70, objectFit: 'contain', imageRendering: 'pixelated', background: '#111', cursor: 'zoom-in', display: 'block' },
+  cycleThumbLabel: { fontSize: 10, color: '#b39dff', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Zoom overlay (image lightbox)
   zoomBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.96)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, cursor: 'zoom-out', padding: 20 },
