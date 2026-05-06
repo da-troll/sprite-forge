@@ -84,47 +84,114 @@ Rules:
   return resp.choices[0].message.content.trim();
 }
 
-export async function buildAnchorPrompt(description, stylePreset) {
+/**
+ * Vision-enrich: have gpt-4o-mini describe the reference image's identity-preserving
+ * features (face, hair, build, distinctive attire) so the text prompt + image refs both
+ * carry the same identity signal.
+ */
+import { promises as fsp } from 'fs';
+export async function describeReference(refImagePath) {
+  try {
+    const buf = await fsp.readFile(refImagePath);
+    const b64 = buf.toString('base64');
+    const ext = (refImagePath.split('.').pop() || 'png').toLowerCase();
+    const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    const resp = await client.chat.completions.create({
+      model: CHAT_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: `You describe characters from reference images for sprite-art generation.
+Extract identity-preserving features ONLY:
+- face shape, skin tone, distinctive features
+- hair colour, length, style
+- eye colour
+- body type / build / approximate height
+- signature outfit elements (jacket, hat, weapon, jewelry)
+- pose if relevant
+Output a tight comma-separated description in 25-50 words. No commentary.`,
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Describe this character for a sprite reference:' },
+            { type: 'image_url', image_url: { url: `data:${mime};base64,${b64}` } },
+          ],
+        },
+      ],
+      max_tokens: 200,
+    });
+    return resp.choices[0].message.content.trim();
+  } catch (err) {
+    console.warn('[describeReference] failed:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Anchor prompt — invoked with `images.edit` when refs are provided.
+ * - refRoles[i] describes the role of refs[i] ('primary identity' | 'pose' | 'style')
+ */
+export async function buildAnchorPrompt(description, stylePreset, refRoles = []) {
   const preset = getStylePreset(stylePreset);
   const expanded = await expandPrompt(description, { style: stylePreset });
-  return `4-angle character reference sheet, ${preset.fragment}.
-Four views arranged in 2x2 grid: top-left=front facing, top-right=three-quarter turn, bottom-left=side profile, bottom-right=back view.
-Character: ${expanded}
-Transparent background. White border between quadrants. Consistent design across all 4 angles. No text labels.`;
+
+  const refSection = refRoles.length > 0
+    ? `\nREFERENCES (preserve identity from these images):
+${refRoles.map((role, i) => `- Image ${i + 1} (${role}): retain face, hair colour, eye colour, build, distinctive features.`).join('\n')}\n`
+    : '';
+
+  return `TASK: 4-angle character reference sheet for a game sprite.
+LAYOUT: 2×2 grid — top-left=front, top-right=three-quarter turn, bottom-left=side profile, bottom-right=back.
+${refSection}
+STYLE: ${preset.fragment}.
+CHARACTER: ${expanded}
+INVARIANTS: identical character across all four angles. Transparent background. White borders between quadrants. No text labels. Consistent proportions and colour palette.`;
 }
 
-export async function buildLayerPrompt(description, layerType, stylePreset, anchorContext) {
+/**
+ * Layer prompt — always invoked with `images.edit` against the anchor sheet.
+ * Anchor is the primary visual reference; the prompt isolates one paper-doll layer.
+ */
+export function buildLayerPrompt(description, layerType, stylePreset) {
   const preset = getStylePreset(stylePreset);
   const layerDescs = {
-    base: 'naked mannequin base character body, no clothing, just the base figure',
-    clothing: 'clothing outfit layer only, transparent everywhere except clothing',
-    accessory: 'accessories only (hat, glasses, jewelry), transparent everywhere else',
-    weapon: 'weapon or tool held in hand, isolated on transparent background',
-    prop: 'environmental prop or item, no character, transparent background',
+    base: 'naked mannequin base body — no clothing, no accessories, just the bare figure',
+    clothing: 'clothing outfit only — full body garments as worn, transparent everywhere else',
+    accessory: 'accessories only — hat, glasses, jewelry, belt — transparent everywhere else',
+    weapon: 'weapon or held tool only — extracted from the character, transparent everywhere else',
+    prop: 'environmental prop or held item only — no character, transparent background',
   };
-  return `Isolated ${layerType} layer for sprite paper-doll system. ${preset.fragment}.
-Layer type: ${layerDescs[layerType] || layerType}.
-Character context: ${description}
-Anchor design: ${anchorContext}
-CRITICAL: Transparent PNG, only the ${layerType} visible, nothing else. Same perspective as anchor front view.`;
+
+  return `TASK: extract a single paper-doll layer for the character shown in the reference image.
+LAYER: ${layerType} — ${layerDescs[layerType] || layerType}.
+STYLE: ${preset.fragment}.
+CHARACTER: ${description}
+INVARIANTS: same character design, colours, and proportions as the reference. Use only the front-facing angle (top-left quadrant of the reference). Output a single transparent PNG containing ONLY the ${layerType} — every other element (background, body, other clothing) must be fully transparent.`;
 }
 
-export async function buildCyclePrompt(description, cycleName, frameIndex, totalFrames, stylePreset) {
+/**
+ * Cycle frame prompt — always invoked with `images.edit` against the anchor sheet.
+ * The anchor is the canonical identity; the prompt requests one animation pose.
+ */
+export function buildCyclePrompt(description, cycleName, frameIndex, totalFrames, stylePreset) {
   const preset = getStylePreset(stylePreset);
   const cycleDescs = {
-    walk: `walking cycle frame ${frameIndex+1}/${totalFrames}, legs in motion, arm swing`,
-    run: `running cycle frame ${frameIndex+1}/${totalFrames}, dynamic lean, fast leg movement`,
-    idle: `idle breathing animation frame ${frameIndex+1}/${totalFrames}, subtle body sway`,
-    attack: `attack animation frame ${frameIndex+1}/${totalFrames}, weapon or fist forward`,
-    hurt: `hurt reaction frame ${frameIndex+1}/${totalFrames}, recoil backwards, pained expression`,
-    jump: `jump arc frame ${frameIndex+1}/${totalFrames}, airborne pose`,
-    cast: `spell casting frame ${frameIndex+1}/${totalFrames}, magical gesture, energy particles`,
-    death: `death animation frame ${frameIndex+1}/${totalFrames}, falling or collapsing`,
+    walk: `walking cycle frame ${frameIndex + 1}/${totalFrames} — legs mid-stride, opposite arm forward, weight shift`,
+    run: `running cycle frame ${frameIndex + 1}/${totalFrames} — dynamic lean, fast leg movement, exaggerated motion`,
+    idle: `idle breathing animation frame ${frameIndex + 1}/${totalFrames} — subtle body sway, micro-motion`,
+    attack: `attack animation frame ${frameIndex + 1}/${totalFrames} — weapon or fist forward, anticipation/strike/recovery beat`,
+    hurt: `hurt reaction frame ${frameIndex + 1}/${totalFrames} — recoil backwards, pained expression`,
+    jump: `jump arc frame ${frameIndex + 1}/${totalFrames} — airborne pose, limbs tucked or spread`,
+    cast: `spell casting frame ${frameIndex + 1}/${totalFrames} — magical gesture, energy particles emerging`,
+    death: `death animation frame ${frameIndex + 1}/${totalFrames} — falling, collapsing, or dissolving pose`,
   };
-  return `Single animation frame sprite. ${preset.fragment}.
-Character: ${description}
-Animation: ${cycleDescs[cycleName] || cycleName}
-Transparent background. Consistent character design. Same proportions as reference.`;
+
+  return `TASK: single animation frame for the character shown in the reference image.
+ANIMATION: ${cycleDescs[cycleName] || cycleName}.
+STYLE: ${preset.fragment}.
+CHARACTER: ${description}
+INVARIANTS: same character design, face, hair, outfit, weapon, and colour palette as the reference. Use a single full-body angle (front or 3/4-view, NOT all four angles). Transparent background. Consistent proportions.`;
 }
 
 export async function buildBackgroundPrompt(description, sceneStyle) {

@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { getDb } from '../db.js';
 import { generateImage } from '../imgen.js';
-import { buildAnchorPrompt, buildLayerPrompt, buildCyclePrompt, getStylePreset } from '../prompter.js';
+import { buildAnchorPrompt, buildLayerPrompt, buildCyclePrompt, getStylePreset, describeReference } from '../prompter.js';
 import { embedAnchorSheet, scoreFrames, scoreFrame } from '../scorer.js';
 import { LIBRARY_DIR, MEDIA_BASE, DINOV2_REGEN_MAX } from '../config.js';
 
@@ -51,12 +51,32 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
       }
     }
 
-    // Build and call anchor generation
-    console.log('[anchor] Building prompt for:', description.slice(0,40));
-    const prompt = await buildAnchorPrompt(description, stylePreset);
-    console.log('[anchor] Prompt ready, calling gpt-image-2...');
+    // Vision-enrich description from refs (parallel)
+    let enrichedDescription = description;
+    if (refPaths.length > 0) {
+      console.log(`[anchor] Vision-describing ${refPaths.length} reference(s)...`);
+      const visionDescs = await Promise.all(refPaths.map(p => describeReference(p)));
+      const valid = visionDescs.filter(Boolean);
+      if (valid.length > 0) {
+        enrichedDescription = `${description}\n\nFROM REFERENCE IMAGE: ${valid.join(' | ')}`;
+        console.log('[anchor] Vision-enriched description ready');
+      }
+    }
+
+    // Build prompt — labels each ref by role (first = primary identity)
+    const refRoles = refPaths.map((_, i) => i === 0 ? 'PRIMARY identity' : `additional ${i === 1 ? 'pose' : 'style'} reference`);
+    console.log('[anchor] Building prompt for:', description.slice(0, 40), `(${refPaths.length} refs)`);
+    const prompt = await buildAnchorPrompt(enrichedDescription, stylePreset, refRoles);
+    console.log(`[anchor] Calling gpt-image-2 ${refPaths.length > 0 ? 'EDIT' : 'GENERATE'} endpoint...`);
     const anchorPath = path.join(dir, 'anchor.png');
-    await generateImage({ prompt, size: '1024x1024', quality: 'medium', outputPath: anchorPath });
+    await generateImage({
+      prompt,
+      refs: refPaths,
+      inputFidelity: 'high',
+      size: '1024x1024',
+      quality: 'medium',
+      outputPath: anchorPath,
+    });
     console.log('[anchor] Image generated:', anchorPath);
 
     // Embed anchor for scoring (non-fatal — first model load can be slow)
@@ -72,7 +92,7 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
       id,
       name || description.slice(0, 50),
       stylePreset,
-      description,
+      enrichedDescription,
       JSON.stringify(refPaths),
       anchorPath,
       JSON.stringify(embeddings),
@@ -107,9 +127,17 @@ router.post('/layers', async (req, res) => {
     for (const layerType of layerTypes) {
       const layerId = uuidv4();
       const outPath = path.join(dir, `layer_${layerType}.png`);
-      const prompt = await buildLayerPrompt(sprite.description, layerType, sprite.style_preset, 'front-facing anchor view');
+      const prompt = buildLayerPrompt(sprite.description, layerType, sprite.style_preset);
 
-      await generateImage({ prompt, size: '1024x1024', outputPath: outPath });
+      // Pass anchor as reference — model knows the canonical character design
+      console.log(`[layers] ${layerType}: edit-from-anchor`);
+      await generateImage({
+        prompt,
+        refs: [sprite.anchor_sheet_path],
+        inputFidelity: 'high',
+        size: '1024x1024',
+        outputPath: outPath,
+      });
 
       db.prepare(`INSERT INTO layers (id, sprite_id, layer_type, label, image_path) VALUES (?, ?, ?, ?, ?)`)
         .run(layerId, spriteId, layerType, layerType, outPath);
@@ -149,12 +177,19 @@ router.post('/cycle', async (req, res) => {
     // Stream progress via SSE would be ideal but for now just generate all frames
     for (let i = 0; i < frameCount; i++) {
       let framePath = path.join(dir, `frame_${i.toString().padStart(2,'0')}.png`);
-      console.log(`[cycle] Frame ${i+1}/${frameCount}: generating...`);
-      const prompt = await buildCyclePrompt(sprite.description, cycleName, i, frameCount, sprite.style_preset);
+      console.log(`[cycle] Frame ${i+1}/${frameCount}: edit-from-anchor`);
+      const prompt = buildCyclePrompt(sprite.description, cycleName, i, frameCount, sprite.style_preset);
 
-      await generateImage({ prompt, size: '1024x1024', outputPath: framePath });
+      // Anchor as reference: model preserves identity per-frame
+      await generateImage({
+        prompt,
+        refs: [sprite.anchor_sheet_path],
+        inputFidelity: 'high',
+        size: '1024x1024',
+        outputPath: framePath,
+      });
 
-      // Score against anchor
+      // Score as guard rail — should rarely fire now that anchor is referenced
       let attempts = 0;
       let scoreResult;
       if (anchorEmbeddings.length > 0) {
@@ -163,7 +198,13 @@ router.post('/cycle', async (req, res) => {
         while (!scoreResult.pass && attempts < DINOV2_REGEN_MAX) {
           console.log(`[cycle] Frame ${i} score ${scoreResult.score.toFixed(3)} < threshold, regen ${attempts+1}`);
           const regenPath = path.join(dir, `frame_${i.toString().padStart(2,'0')}_regen${attempts+1}.png`);
-          await generateImage({ prompt, size: '1024x1024', outputPath: regenPath });
+          await generateImage({
+            prompt,
+            refs: [sprite.anchor_sheet_path],
+            inputFidelity: 'high',
+            size: '1024x1024',
+            outputPath: regenPath,
+          });
           const newScore = await scoreFrame(regenPath, anchorEmbeddings);
           if (newScore.score > scoreResult.score) {
             framePath = regenPath;
@@ -227,7 +268,7 @@ router.post('/regen-frame', async (req, res) => {
     if (cycleId === undefined || frameIndex === undefined) return res.status(400).json({ error: 'cycleId and frameIndex required' });
 
     const db = getDb();
-    const cycle = db.prepare('SELECT c.*, s.description, s.style_preset, s.anchor_embeddings FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
+    const cycle = db.prepare('SELECT c.*, s.description, s.style_preset, s.anchor_embeddings, s.anchor_sheet_path FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
     if (!cycle) return res.status(404).json({ error: 'cycle not found' });
 
     const framePaths = JSON.parse(cycle.frame_paths);
@@ -238,8 +279,14 @@ router.post('/regen-frame', async (req, res) => {
     const dir = path.dirname(oldPath);
     const regenPath = path.join(dir, `frame_${frameIndex.toString().padStart(2,'0')}_manual_${Date.now()}.png`);
 
-    const prompt = await buildCyclePrompt(cycle.description, cycle.cycle_name, frameIndex, frameCount, cycle.style_preset);
-    await generateImage({ prompt, size: '1024x1024', outputPath: regenPath });
+    const prompt = buildCyclePrompt(cycle.description, cycle.cycle_name, frameIndex, frameCount, cycle.style_preset);
+    await generateImage({
+      prompt,
+      refs: [cycle.anchor_sheet_path],
+      inputFidelity: 'high',
+      size: '1024x1024',
+      outputPath: regenPath,
+    });
 
     const scoreResult = anchorEmbeddings.length > 0
       ? await scoreFrame(regenPath, anchorEmbeddings)
