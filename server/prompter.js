@@ -164,10 +164,11 @@ export function buildLayerPrompt(description, layerType, stylePreset) {
   };
 
   return `TASK: extract a single paper-doll layer for the character shown in the reference image.
+OUTPUT FORMAT: a single isolated ${layerType} centered on a transparent canvas. NOT a multi-angle sheet, NOT a 2x2 grid, NOT multiple views.
 LAYER: ${layerType} — ${layerDescs[layerType] || layerType}.
 STYLE: ${preset.fragment}.
 CHARACTER: ${description}
-INVARIANTS: same character design, colours, and proportions as the reference. Use only the front-facing angle (top-left quadrant of the reference). Output a single transparent PNG containing ONLY the ${layerType} — every other element (background, body, other clothing) must be fully transparent.`;
+INVARIANTS: same colours, proportions, and design as the reference. Output ONLY the ${layerType} — every other element (background, body, other clothing) must be fully transparent.`;
 }
 
 /**
@@ -187,11 +188,13 @@ export function buildCyclePrompt(description, cycleName, frameIndex, totalFrames
     death: `death animation frame ${frameIndex + 1}/${totalFrames} — falling, collapsing, or dissolving pose`,
   };
 
-  return `TASK: single animation frame for the character shown in the reference image.
-ANIMATION: ${cycleDescs[cycleName] || cycleName}.
+  return `TASK: produce ONE single full-body animation frame of the character shown in the reference image.
+OUTPUT FORMAT: a single character pose centered in the canvas, full body visible, transparent background.
+DO NOT: do not produce a multi-angle reference sheet. Do not produce a 2x2 grid. Do not show multiple poses or views. Do not duplicate the character. Just one pose.
+ANIMATION POSE: ${cycleDescs[cycleName] || cycleName}.
 STYLE: ${preset.fragment}.
 CHARACTER: ${description}
-INVARIANTS: same character design, face, hair, outfit, weapon, and colour palette as the reference. Use a single full-body angle (front or 3/4-view, NOT all four angles). Transparent background. Consistent proportions.`;
+INVARIANTS: identical face, hair colour, outfit, weapon, and colour palette as the reference. Single full-body 3/4-view or front-facing pose. Transparent background.`;
 }
 
 export async function buildBackgroundPrompt(description, sceneStyle) {

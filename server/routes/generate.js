@@ -31,6 +31,30 @@ function mediaUrl(absPath) {
   return absPath.replace(LIBRARY_DIR, MEDIA_BASE);
 }
 
+// Returns the path to the front-facing crop, generating it lazily if missing
+// (for sprites created before the schema change).
+async function getFrontRefPath(sprite) {
+  if (sprite.anchor_front_path) {
+    try {
+      const { existsSync } = await import('fs');
+      if (existsSync(sprite.anchor_front_path)) return sprite.anchor_front_path;
+    } catch {}
+  }
+  // Lazy backfill
+  const { default: sharp } = await import('sharp');
+  const meta = await sharp(sprite.anchor_sheet_path).metadata();
+  const qw = Math.floor(meta.width / 2);
+  const qh = Math.floor(meta.height / 2);
+  const frontPath = path.join(path.dirname(sprite.anchor_sheet_path), 'anchor_front.png');
+  await sharp(sprite.anchor_sheet_path)
+    .extract({ left: 0, top: 0, width: qw, height: qh })
+    .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toFile(frontPath);
+  getDb().prepare('UPDATE sprites SET anchor_front_path=? WHERE id=?').run(frontPath, sprite.id);
+  return frontPath;
+}
+
 // ---- POST /api/generate/anchor ----
 router.post('/anchor', upload.array('refs', 3), async (req, res) => {
   try {
@@ -80,6 +104,20 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
     });
     console.log('[anchor] Image generated:', anchorPath);
 
+    // Extract front-facing quadrant (top-left) for use as the layer/cycle reference.
+    // The 4-angle sheet itself is a bad ref because the model reproduces the 4-up layout.
+    const { default: sharp } = await import('sharp');
+    const meta = await sharp(anchorPath).metadata();
+    const qw = Math.floor(meta.width / 2);
+    const qh = Math.floor(meta.height / 2);
+    const frontPath = path.join(dir, 'anchor_front.png');
+    await sharp(anchorPath)
+      .extract({ left: 0, top: 0, width: qw, height: qh })
+      .resize(1024, 1024, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toFile(frontPath);
+    console.log('[anchor] Front crop extracted:', frontPath);
+
     // Embed anchor for scoring (non-fatal — first model load can be slow)
     let embeddings = [];
     try {
@@ -88,14 +126,15 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
       console.warn('[anchor] Embedding failed (scoring disabled for this sprite):', embErr.message);
     }
 
-    db.prepare(`INSERT INTO sprites (id, name, style_preset, description, ref_image_paths, anchor_sheet_path, anchor_embeddings)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    db.prepare(`INSERT INTO sprites (id, name, style_preset, description, ref_image_paths, anchor_sheet_path, anchor_front_path, anchor_embeddings)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
       id,
       name || description.slice(0, 50),
       stylePreset,
       enrichedDescription,
       JSON.stringify(refPaths),
       anchorPath,
+      frontPath,
       JSON.stringify(embeddings),
     );
 
@@ -126,16 +165,17 @@ router.post('/layers', async (req, res) => {
     const dir = spriteDir(spriteId);
     const results = [];
 
+    const frontRef = await getFrontRefPath(sprite);
     for (const layerType of layerTypes) {
       const layerId = uuidv4();
       const outPath = path.join(dir, `layer_${layerType}.png`);
       const prompt = buildLayerPrompt(sprite.description, layerType, sprite.style_preset);
 
-      // Pass anchor as reference — model knows the canonical character design
-      console.log(`[layers] ${layerType}: edit-from-anchor`);
+      // Pass FRONT crop as reference — model knows canonical design without copying the 4-up layout
+      console.log(`[layers] ${layerType}: edit-from-front-anchor`);
       await generateImage({
         prompt,
-        refs: [sprite.anchor_sheet_path],
+        refs: [frontRef],
         inputFidelity: 'high',
         size: '1024x1024',
         quality: layerQuality,
@@ -209,19 +249,19 @@ async function runCycleJob(cycleId, sprite, cycleName, frameCount, quality) {
   const dir = path.join(spriteDir(sprite.id), cycleName);
   mkdirSync(dir, { recursive: true });
 
+  const frontRef = await getFrontRefPath(sprite);
   const framePaths = [];
   const scoringResults = [];
-  console.log(`[cycle ${cycleId.slice(0,8)}] start: ${cycleName} ${frameCount} frames @ ${quality}`);
+  console.log(`[cycle ${cycleId.slice(0,8)}] start: ${cycleName} ${frameCount} frames @ ${quality} (ref=front)`);
 
-    // Stream progress via SSE would be ideal but for now just generate all frames
   for (let i = 0; i < frameCount; i++) {
     let framePath = path.join(dir, `frame_${i.toString().padStart(2,'0')}.png`);
-    console.log(`[cycle ${cycleId.slice(0,8)}] frame ${i+1}/${frameCount}: edit-from-anchor`);
+    console.log(`[cycle ${cycleId.slice(0,8)}] frame ${i+1}/${frameCount}: edit-from-front-anchor`);
     const prompt = buildCyclePrompt(sprite.description, cycleName, i, frameCount, sprite.style_preset);
 
     await generateImage({
       prompt,
-      refs: [sprite.anchor_sheet_path],
+      refs: [frontRef],
       inputFidelity: 'high',
       size: '1024x1024',
       quality,
@@ -238,7 +278,7 @@ async function runCycleJob(cycleId, sprite, cycleName, frameCount, quality) {
         const regenPath = path.join(dir, `frame_${i.toString().padStart(2,'0')}_regen${attempts+1}.png`);
         await generateImage({
           prompt,
-          refs: [sprite.anchor_sheet_path],
+          refs: [frontRef],
           inputFidelity: 'high',
           size: '1024x1024',
           quality,
@@ -328,12 +368,17 @@ router.post('/regen-frame', async (req, res) => {
     const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
-    const cycle = db.prepare('SELECT c.*, s.description, s.style_preset, s.anchor_embeddings, s.anchor_sheet_path FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
+    const cycle = db.prepare('SELECT c.*, s.id as sprite_id, s.description, s.style_preset, s.anchor_embeddings, s.anchor_sheet_path, s.anchor_front_path FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
     if (!cycle) return res.status(404).json({ error: 'cycle not found' });
 
     const framePaths = JSON.parse(cycle.frame_paths);
     const anchorEmbeddings = JSON.parse(cycle.anchor_embeddings || '[]');
     const frameCount = cycle.frame_count;
+    const frontRef = await getFrontRefPath({
+      id: cycle.sprite_id,
+      anchor_front_path: cycle.anchor_front_path,
+      anchor_sheet_path: cycle.anchor_sheet_path,
+    });
 
     const oldPath = framePaths[frameIndex];
     const dir = path.dirname(oldPath);
@@ -342,7 +387,7 @@ router.post('/regen-frame', async (req, res) => {
     const prompt = buildCyclePrompt(cycle.description, cycle.cycle_name, frameIndex, frameCount, cycle.style_preset);
     await generateImage({
       prompt,
-      refs: [cycle.anchor_sheet_path],
+      refs: [frontRef],
       inputFidelity: 'high',
       size: '1024x1024',
       quality,

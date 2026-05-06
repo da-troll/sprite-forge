@@ -243,7 +243,9 @@ const S: Record<string, React.CSSProperties> = {
   cycleThumbLabel: { fontSize: 10, color: '#b39dff', marginTop: 3, textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Zoom overlay (image lightbox)
+  // For pixel art: scale up to a large display size with nearest-neighbor so 128px GIFs become viewable.
+  // width: auto + height: min(...) lets browser scale based on aspect ratio while pixelated rendering preserves crispness.
   zoomBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.96)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, cursor: 'zoom-out', padding: 20 },
-  zoomImg: { maxWidth: '95vw', maxHeight: '90vh', objectFit: 'contain', imageRendering: 'pixelated' },
+  zoomImg: { width: 'auto', height: 'auto', minWidth: 'min(80vw, 80vh)', minHeight: 'min(80vw, 80vh)', maxWidth: '95vw', maxHeight: '90vh', objectFit: 'contain', imageRendering: 'pixelated' },
   zoomCloseHint: { position: 'absolute', bottom: 16, color: '#7c7ca0', fontSize: 12, letterSpacing: 1 },
 };

@@ -106,4 +106,8 @@ function migrate(db) {
   ensureCol('cycles', 'error_message',   "error_message TEXT");
   ensureCol('cycles', 'quality',         "quality TEXT");
   ensureCol('cycles', 'updated_at',      "updated_at INTEGER NOT NULL DEFAULT 0");
+
+  // Front-facing crop of the 4-angle anchor — used as ref for layers/cycles
+  // so the model doesn't reproduce the 4-angle layout in single-frame outputs.
+  ensureCol('sprites', 'anchor_front_path', "anchor_front_path TEXT");
 }
