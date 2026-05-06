@@ -34,8 +34,9 @@ function mediaUrl(absPath) {
 // ---- POST /api/generate/anchor ----
 router.post('/anchor', upload.array('refs', 3), async (req, res) => {
   try {
-    const { description, stylePreset = '16bit-jrpg', name } = req.body;
+    const { description, stylePreset = '16bit-jrpg', name, quality: reqQuality } = req.body;
     if (!description) return res.status(400).json({ error: 'description required' });
+    const anchorQuality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'high';
 
     const db = getDb();
     const id = uuidv4();
@@ -74,7 +75,7 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
       refs: refPaths,
       inputFidelity: 'high',
       size: '1024x1024',
-      quality: 'medium',
+      quality: anchorQuality,
       outputPath: anchorPath,
     });
     console.log('[anchor] Image generated:', anchorPath);
@@ -114,8 +115,9 @@ router.post('/anchor', upload.array('refs', 3), async (req, res) => {
 // ---- POST /api/generate/layers ----
 router.post('/layers', async (req, res) => {
   try {
-    const { spriteId, layerTypes = ['base', 'clothing', 'weapon'] } = req.body;
+    const { spriteId, layerTypes = ['base', 'clothing', 'weapon'], quality: reqQuality } = req.body;
     if (!spriteId) return res.status(400).json({ error: 'spriteId required' });
+    const layerQuality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const sprite = db.prepare('SELECT * FROM sprites WHERE id = ?').get(spriteId);
@@ -136,6 +138,7 @@ router.post('/layers', async (req, res) => {
         refs: [sprite.anchor_sheet_path],
         inputFidelity: 'high',
         size: '1024x1024',
+        quality: layerQuality,
         outputPath: outPath,
       });
 
@@ -153,6 +156,9 @@ router.post('/layers', async (req, res) => {
 });
 
 // ---- POST /api/generate/cycle ----
+// Fire-and-forget. Inserts cycle row immediately with status='running',
+// returns cycleId, kicks off frame generation in background.
+// Frontend polls GET /api/generate/cycle/:cycleId to follow progress.
 router.post('/cycle', async (req, res) => {
   try {
     const { spriteId, cycleName, frameCount: reqFrameCount, quality: reqQuality } = req.body;
@@ -164,104 +170,154 @@ router.post('/cycle', async (req, res) => {
     if (!sprite) return res.status(404).json({ error: 'sprite not found' });
 
     const styleConfig = getStylePreset(sprite.style_preset);
-    const frameCount = reqFrameCount || styleConfig.cycleDefaults?.frameCount || 6;
-    const anchorEmbeddings = JSON.parse(sprite.anchor_embeddings || '[]');
+    const frameCount = Math.max(1, Math.min(16, parseInt(reqFrameCount, 10) || styleConfig.cycleDefaults?.frameCount || 6));
 
     const dir = path.join(spriteDir(spriteId), cycleName);
     mkdirSync(dir, { recursive: true });
 
     const cycleId = uuidv4();
-    const framePaths = [];
-    const scoringResults = [];
-    console.log(`[cycle] Starting ${cycleName} (${frameCount} frames, quality=${quality}) for sprite ${spriteId.slice(0,8)}`);
+    const now = Math.floor(Date.now() / 1000);
 
-    // Stream progress via SSE would be ideal but for now just generate all frames
-    for (let i = 0; i < frameCount; i++) {
-      let framePath = path.join(dir, `frame_${i.toString().padStart(2,'0')}.png`);
-      console.log(`[cycle] Frame ${i+1}/${frameCount}: edit-from-anchor`);
-      const prompt = buildCyclePrompt(sprite.description, cycleName, i, frameCount, sprite.style_preset);
+    // Insert cycle row with status='running' so it shows up immediately
+    db.prepare(`INSERT INTO cycles
+      (id, sprite_id, cycle_name, frame_paths, frame_count, scoring_results, status, frames_complete, quality, updated_at)
+      VALUES (?, ?, ?, '[]', ?, '[]', 'running', 0, ?, ?)`)
+      .run(cycleId, spriteId, cycleName, frameCount, quality, now);
 
-      // Anchor as reference: model preserves identity per-frame
-      await generateImage({
-        prompt,
-        refs: [sprite.anchor_sheet_path],
-        inputFidelity: 'high',
-        size: '1024x1024',
-        quality,
-        outputPath: framePath,
-      });
+    res.json({ cycleId, status: 'running', frameCount, quality });
 
-      // Score as guard rail — should rarely fire now that anchor is referenced
-      let attempts = 0;
-      let scoreResult;
-      if (anchorEmbeddings.length > 0) {
-        scoreResult = await scoreFrame(framePath, anchorEmbeddings);
-
-        while (!scoreResult.pass && attempts < DINOV2_REGEN_MAX) {
-          console.log(`[cycle] Frame ${i} score ${scoreResult.score.toFixed(3)} < threshold, regen ${attempts+1}`);
-          const regenPath = path.join(dir, `frame_${i.toString().padStart(2,'0')}_regen${attempts+1}.png`);
-          await generateImage({
-            prompt,
-            refs: [sprite.anchor_sheet_path],
-            inputFidelity: 'high',
-            size: '1024x1024',
-            quality,
-            outputPath: regenPath,
-          });
-          const newScore = await scoreFrame(regenPath, anchorEmbeddings);
-          if (newScore.score > scoreResult.score) {
-            framePath = regenPath;
-            scoreResult = newScore;
-          }
-          attempts++;
-        }
-      }
-
-      framePaths.push(framePath);
-      scoringResults.push({ frameIndex: i, attempts, score: scoreResult?.score ?? null, pass: scoreResult?.pass ?? true });
-    }
-
-    // Build sprite sheet (horizontal strip) using sharp
-    const { default: sharp } = await import('sharp');
-    const frames = await Promise.all(framePaths.map(fp => sharp(fp).resize(128, 128, { fit: 'fill' }).toBuffer()));
-    const sheetPath = path.join(spriteDir(spriteId), `${cycleName}_sheet.png`);
-    await sharp({
-      create: { width: 128 * frameCount, height: 128, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
-    }).composite(frames.map((buf, i) => ({ input: buf, left: i * 128, top: 0 }))).png().toFile(sheetPath);
-
-    // Build GIF using Python processor
-    const { spawnSync } = await import('child_process');
-    const gifPath = path.join(spriteDir(spriteId), `${cycleName}.gif`);
-    const gifScript = path.join(path.dirname(new URL(import.meta.url).pathname), '../processors/make_gif.py');
-    const gifResult = spawnSync('python3', [
-      gifScript,
-      '--frames', ...framePaths,
-      '--gif-out', gifPath,
-      '--size', '128',
-      '--fps', String(styleConfig.cycleDefaults?.fps || 8),
-    ], { encoding: 'utf8' });
-    if (gifResult.status !== 0) console.warn('[cycle] GIF gen:', gifResult.stderr);
-
-    db.prepare(`INSERT INTO cycles (id, sprite_id, cycle_name, frame_paths, sprite_sheet_path, gif_path, frame_count, scoring_results)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      cycleId, spriteId, cycleName,
-      JSON.stringify(framePaths), sheetPath, gifPath, frameCount,
-      JSON.stringify(scoringResults),
-    );
-
-    res.json({
-      cycleId,
-      cycleName,
-      frameCount,
-      frames: framePaths.map((fp, i) => ({ index: i, url: mediaUrl(fp), ...scoringResults[i] })),
-      sheetUrl: mediaUrl(sheetPath),
-      gifUrl: mediaUrl(gifPath),
-      scoringResults,
+    // Kick off background work — DO NOT await
+    runCycleJob(cycleId, sprite, cycleName, frameCount, quality).catch(err => {
+      console.error(`[cycle ${cycleId.slice(0,8)}] FATAL:`, err);
+      try {
+        getDb().prepare(`UPDATE cycles SET status='error', error_message=?, updated_at=? WHERE id=?`)
+          .run(err.message || 'unknown error', Math.floor(Date.now() / 1000), cycleId);
+      } catch {}
     });
   } catch (err) {
     console.error('/generate/cycle', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// Background job — generates frames sequentially, persists each to DB as it lands
+async function runCycleJob(cycleId, sprite, cycleName, frameCount, quality) {
+  const db = getDb();
+  const styleConfig = getStylePreset(sprite.style_preset);
+  const anchorEmbeddings = JSON.parse(sprite.anchor_embeddings || '[]');
+
+  const dir = path.join(spriteDir(sprite.id), cycleName);
+  mkdirSync(dir, { recursive: true });
+
+  const framePaths = [];
+  const scoringResults = [];
+  console.log(`[cycle ${cycleId.slice(0,8)}] start: ${cycleName} ${frameCount} frames @ ${quality}`);
+
+    // Stream progress via SSE would be ideal but for now just generate all frames
+  for (let i = 0; i < frameCount; i++) {
+    let framePath = path.join(dir, `frame_${i.toString().padStart(2,'0')}.png`);
+    console.log(`[cycle ${cycleId.slice(0,8)}] frame ${i+1}/${frameCount}: edit-from-anchor`);
+    const prompt = buildCyclePrompt(sprite.description, cycleName, i, frameCount, sprite.style_preset);
+
+    await generateImage({
+      prompt,
+      refs: [sprite.anchor_sheet_path],
+      inputFidelity: 'high',
+      size: '1024x1024',
+      quality,
+      outputPath: framePath,
+    });
+
+    // Score as guard rail
+    let attempts = 0;
+    let scoreResult;
+    if (anchorEmbeddings.length > 0) {
+      scoreResult = await scoreFrame(framePath, anchorEmbeddings);
+      while (!scoreResult.pass && attempts < DINOV2_REGEN_MAX) {
+        console.log(`[cycle ${cycleId.slice(0,8)}] frame ${i} score ${scoreResult.score.toFixed(3)} < threshold, regen ${attempts+1}`);
+        const regenPath = path.join(dir, `frame_${i.toString().padStart(2,'0')}_regen${attempts+1}.png`);
+        await generateImage({
+          prompt,
+          refs: [sprite.anchor_sheet_path],
+          inputFidelity: 'high',
+          size: '1024x1024',
+          quality,
+          outputPath: regenPath,
+        });
+        const newScore = await scoreFrame(regenPath, anchorEmbeddings);
+        if (newScore.score > scoreResult.score) {
+          framePath = regenPath;
+          scoreResult = newScore;
+        }
+        attempts++;
+      }
+    }
+
+    framePaths.push(framePath);
+    scoringResults.push({ frameIndex: i, attempts, score: scoreResult?.score ?? null, pass: scoreResult?.pass ?? true });
+
+    // Persist incremental progress so a restart never loses work
+    db.prepare(`UPDATE cycles SET frame_paths=?, scoring_results=?, frames_complete=?, updated_at=? WHERE id=?`)
+      .run(JSON.stringify(framePaths), JSON.stringify(scoringResults), framePaths.length, Math.floor(Date.now()/1000), cycleId);
+  }
+
+  // Build sprite sheet (horizontal strip)
+  const { default: sharp } = await import('sharp');
+  const frames = await Promise.all(framePaths.map(fp => sharp(fp).resize(128, 128, { fit: 'fill' }).toBuffer()));
+  const sheetPath = path.join(spriteDir(sprite.id), `${cycleName}_sheet.png`);
+  await sharp({
+    create: { width: 128 * frameCount, height: 128, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
+  }).composite(frames.map((buf, i) => ({ input: buf, left: i * 128, top: 0 }))).png().toFile(sheetPath);
+
+  // Build GIF
+  const { spawnSync } = await import('child_process');
+  const gifPath = path.join(spriteDir(sprite.id), `${cycleName}.gif`);
+  const gifScript = path.join(path.dirname(new URL(import.meta.url).pathname), '../processors/make_gif.py');
+  const gifResult = spawnSync('python3', [
+    gifScript,
+    '--frames', ...framePaths,
+    '--gif-out', gifPath,
+    '--size', '128',
+    '--fps', String(styleConfig.cycleDefaults?.fps || 8),
+  ], { encoding: 'utf8' });
+  if (gifResult.status !== 0) console.warn(`[cycle ${cycleId.slice(0,8)}] GIF gen:`, gifResult.stderr);
+
+  db.prepare(`UPDATE cycles SET sprite_sheet_path=?, gif_path=?, status='complete', updated_at=? WHERE id=?`)
+    .run(sheetPath, gifPath, Math.floor(Date.now()/1000), cycleId);
+
+  console.log(`[cycle ${cycleId.slice(0,8)}] complete: ${framePaths.length} frames`);
+}
+
+// ---- GET /api/generate/cycle/:cycleId ----
+// Status polling endpoint — frontend uses this to follow progress
+router.get('/cycle/:cycleId', (req, res) => {
+  const db = getDb();
+  const cycle = db.prepare('SELECT * FROM cycles WHERE id = ?').get(req.params.cycleId);
+  if (!cycle) return res.status(404).json({ error: 'cycle not found' });
+
+  const framePaths = JSON.parse(cycle.frame_paths || '[]');
+  const scoringResults = JSON.parse(cycle.scoring_results || '[]');
+
+  res.json({
+    cycleId: cycle.id,
+    cycleName: cycle.cycle_name,
+    spriteId: cycle.sprite_id,
+    status: cycle.status || 'complete',
+    framesComplete: cycle.frames_complete ?? framePaths.length,
+    frameCount: cycle.frame_count,
+    quality: cycle.quality,
+    errorMessage: cycle.error_message,
+    frames: framePaths.map((fp, i) => ({
+      index: i,
+      url: mediaUrl(fp),
+      score: scoringResults[i]?.score ?? null,
+      pass: scoringResults[i]?.pass ?? null,
+      attempts: scoringResults[i]?.attempts ?? 0,
+    })),
+    sheetUrl: cycle.sprite_sheet_path ? mediaUrl(cycle.sprite_sheet_path) : null,
+    gifUrl: cycle.gif_path ? mediaUrl(cycle.gif_path) : null,
+    scoringResults,
+  });
 });
 
 // ---- POST /api/generate/regen-frame ----

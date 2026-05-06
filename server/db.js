@@ -18,6 +18,12 @@ export function getDb() {
 }
 
 function migrate(db) {
+  // Idempotent column additions
+  const ensureCol = (table, col, ddl) => {
+    const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(r => r.name));
+    if (!cols.has(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  };
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS sprites (
       id TEXT PRIMARY KEY,
@@ -93,4 +99,11 @@ function migrate(db) {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // Background-job columns for cycles (added 2026-05-06)
+  ensureCol('cycles', 'status',          "status TEXT NOT NULL DEFAULT 'complete'");
+  ensureCol('cycles', 'frames_complete', "frames_complete INTEGER NOT NULL DEFAULT 0");
+  ensureCol('cycles', 'error_message',   "error_message TEXT");
+  ensureCol('cycles', 'quality',         "quality TEXT");
+  ensureCol('cycles', 'updated_at',      "updated_at INTEGER NOT NULL DEFAULT 0");
 }

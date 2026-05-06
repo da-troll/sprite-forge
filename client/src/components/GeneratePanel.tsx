@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { generateAnchor, generateLayers, transcribeVoice } from '../api';
+import { generateAnchor, generateLayers, transcribeVoice, type ImageQuality } from '../api';
+import QualitySelector from './QualitySelector';
 import type { Sprite } from '../App';
 
 const STYLE_PRESETS = [
@@ -25,6 +26,8 @@ export default function GeneratePanel({ onCreated }: { onCreated: (s: Sprite) =>
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [anchorQuality, setAnchorQuality] = useState<ImageQuality>('high');
+  const [layerQuality, setLayerQuality] = useState<ImageQuality>('medium');
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -36,16 +39,17 @@ export default function GeneratePanel({ onCreated }: { onCreated: (s: Sprite) =>
     form.append('description', description);
     form.append('stylePreset', stylePreset);
     form.append('name', name || description.slice(0, 50));
+    form.append('quality', anchorQuality);
     refs.forEach(f => form.append('refs', f));
 
-    setStatus('Generating anchor sheet (4-angle view)...');
+    setStatus(`Generating anchor sheet at ${anchorQuality} quality (4-angle view)...`);
     const anchor = await generateAnchor(form);
     if (anchor.error) { setError(anchor.error); setStatus(null); return; }
 
     setResult({ ...anchor, step: 'anchor' });
-    setStatus(`Anchor ready. Generating ${selectedLayers.length} layers...`);
+    setStatus(`Anchor ready. Generating ${selectedLayers.length} layers at ${layerQuality} quality...`);
 
-    const layers = await generateLayers(anchor.id, selectedLayers);
+    const layers = await generateLayers(anchor.id, selectedLayers, layerQuality);
     if (layers.error) { setError(layers.error); setStatus(null); return; }
 
     setStatus(null);
@@ -143,6 +147,14 @@ export default function GeneratePanel({ onCreated }: { onCreated: (s: Sprite) =>
       </div>
 
       <div style={S.field}>
+        <label style={S.label}>Generation Quality</label>
+        <div style={S.qualityRow}>
+          <QualitySelector value={anchorQuality} onChange={setAnchorQuality} label="Anchor Sheet" disabled={!!status} />
+          <QualitySelector value={layerQuality} onChange={setLayerQuality} label="Paper-doll Layers" disabled={!!status} />
+        </div>
+      </div>
+
+      <div style={S.field}>
         <label style={S.label}>Reference Images (up to 3, optional)</label>
         <input
           type="file" accept="image/*" multiple
@@ -203,6 +215,7 @@ const S: Record<string, React.CSSProperties> = {
   presetBtn: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 8, color: '#8888aa', cursor: 'pointer', padding: '12px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, transition: 'all 0.15s' },
   presetBtnActive: { background: '#2a1a5a', border: '1px solid #7c4dff', color: '#b39dff' },
   layerRow: { display: 'flex', gap: 16, flexWrap: 'wrap' },
+  qualityRow: { display: 'flex', gap: 24, flexWrap: 'wrap' },
   layerCheck: { display: 'flex', alignItems: 'center', gap: 6, color: '#b39dff', cursor: 'pointer', fontSize: 14 },
   fileInput: { color: '#8888aa', fontSize: 13 },
   refPreviews: { display: 'flex', gap: 10, marginTop: 8 },

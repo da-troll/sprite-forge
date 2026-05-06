@@ -1,22 +1,24 @@
 import React, { useState } from 'react';
-import { buildDepthMaps, buildBulkDepthMaps } from '../api';
+import { buildDepthMaps, buildBulkDepthMaps, type ImageQuality } from '../api';
+import QualitySelector from './QualitySelector';
 import type { Sprite, Cycle } from '../App';
 
 export default function DepthMapsPanel({ sprite, cycle }: { sprite: Sprite; cycle: Cycle }) {
   const [maps, setMaps] = useState<Record<number, any>>({});
   const [loading, setLoading] = useState<number | 'bulk' | null>(null);
   const [activeFrame, setActiveFrame] = useState(0);
+  const [quality, setQuality] = useState<ImageQuality>('medium');
 
   async function handleBuild(frameIndex: number) {
     setLoading(frameIndex);
-    const r = await buildDepthMaps(cycle.id, frameIndex);
+    const r = await buildDepthMaps(cycle.id, frameIndex, quality);
     setLoading(null);
     if (!r.error) setMaps(prev => ({ ...prev, [frameIndex]: r }));
   }
 
   async function handleBulk() {
     setLoading('bulk');
-    const r = await buildBulkDepthMaps(cycle.id);
+    const r = await buildBulkDepthMaps(cycle.id, quality);
     setLoading(null);
     if (r.maps) {
       const newMaps: Record<number, any> = {};
@@ -33,6 +35,7 @@ export default function DepthMapsPanel({ sprite, cycle }: { sprite: Sprite; cycl
       <p style={S.sub}>Per-frame diffuse, depth, normal, and emission maps for game engine integration.</p>
 
       <div style={S.controls}>
+        <QualitySelector value={quality} onChange={setQuality} label="Emission Quality" disabled={!!loading} />
         <button style={S.bulkBtn} onClick={handleBulk} disabled={loading === 'bulk'}>
           {loading === 'bulk' ? '⏳ Building all...' : '📦 Build All Frames'}
         </button>
@@ -104,7 +107,7 @@ const S: Record<string, React.CSSProperties> = {
   root: { maxWidth: 900 },
   title: { fontSize: 22, color: '#b39dff', marginBottom: 8 },
   sub: { color: '#8888aa', fontSize: 13, marginBottom: 20 },
-  controls: { marginBottom: 16 },
+  controls: { marginBottom: 16, display: 'flex', gap: 16, alignItems: 'flex-end' },
   bulkBtn: { background: '#7c4dff', border: 'none', borderRadius: 8, color: '#fff', cursor: 'pointer', padding: '10px 24px', fontSize: 14, fontWeight: 600 },
   frameSelector: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 },
   framePill: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 6, color: '#8888aa', cursor: 'pointer', padding: '4px 12px', fontSize: 13, transition: 'all 0.15s' },

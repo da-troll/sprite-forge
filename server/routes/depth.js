@@ -16,8 +16,9 @@ function mediaUrl(p) { return p?.replace(LIBRARY_DIR, MEDIA_BASE); }
 
 router.post('/build', async (req, res) => {
   try {
-    const { cycleId, frameIndex } = req.body;
+    const { cycleId, frameIndex, quality: reqQuality } = req.body;
     if (!cycleId || frameIndex === undefined) return res.status(400).json({ error: 'cycleId and frameIndex required' });
+    const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const cycle = db.prepare('SELECT c.*, s.description FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
@@ -27,7 +28,7 @@ router.post('/build', async (req, res) => {
     const framePath = framePaths[frameIndex];
     const outDir = path.join(LIBRARY_DIR, cycle.sprite_id, cycle.cycle_name, 'maps');
 
-    const maps = await buildDepthMapBundle(framePath, cycle.description, outDir);
+    const maps = await buildDepthMapBundle(framePath, cycle.description, outDir, quality);
 
     const mapId = uuidv4();
     db.prepare(`INSERT INTO depth_maps (id, cycle_id, frame_index, diffuse_path, depth_path, normal_path, emission_path)
@@ -48,8 +49,9 @@ router.post('/build', async (req, res) => {
 
 router.post('/bulk', async (req, res) => {
   try {
-    const { cycleId } = req.body;
+    const { cycleId, quality: reqQuality } = req.body;
     if (!cycleId) return res.status(400).json({ error: 'cycleId required' });
+    const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const cycle = db.prepare('SELECT c.*, s.description FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
@@ -60,7 +62,7 @@ router.post('/bulk', async (req, res) => {
     const results = [];
 
     for (let i = 0; i < framePaths.length; i++) {
-      const maps = await buildDepthMapBundle(framePaths[i], cycle.description, outDir);
+      const maps = await buildDepthMapBundle(framePaths[i], cycle.description, outDir, quality);
       const mapId = uuidv4();
       db.prepare(`INSERT INTO depth_maps (id, cycle_id, frame_index, diffuse_path, depth_path, normal_path, emission_path)
         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(mapId, cycleId, i, maps.diffuse, maps.depth, maps.normal, maps.emission);

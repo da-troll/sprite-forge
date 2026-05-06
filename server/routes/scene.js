@@ -19,8 +19,9 @@ function mediaUrl(p) { return p?.replace(LIBRARY_DIR, MEDIA_BASE); }
 
 router.post('/create', async (req, res) => {
   try {
-    const { spriteIds, sceneStyle, name } = req.body;
+    const { spriteIds, sceneStyle, name, quality: reqQuality } = req.body;
     if (!spriteIds?.length || spriteIds.length < 2) return res.status(400).json({ error: 'at least 2 spriteIds required' });
+    const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const sprites = spriteIds.map(id => db.prepare('SELECT * FROM sprites WHERE id = ?').get(id)).filter(Boolean);
@@ -35,7 +36,7 @@ router.post('/create', async (req, res) => {
     const bgDesc = sprites.map(s => s.description).join(', ');
     const bgPath = path.join(sceneDir, 'background.png');
     const bgPrompt = await buildBackgroundPrompt(bgDesc, sceneStyle);
-    await generateImage({ prompt: bgPrompt, size: '1024x1024', outputPath: bgPath });
+    await generateImage({ prompt: bgPrompt, size: '1024x1024', quality, outputPath: bgPath });
 
     // Composite sprites onto background
     const bgMeta = await sharp(bgPath).metadata();

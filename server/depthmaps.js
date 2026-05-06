@@ -78,18 +78,18 @@ export async function generateNormalMap(depthPath, outputPath) {
   return outputPath;
 }
 
-export async function generateEmissionMask(spriteDescription, outputPath) {
+export async function generateEmissionMask(spriteDescription, outputPath, quality = 'medium') {
   const prompt = `Pure black background, isolated glowing emission mask only.
 No character, no body, no outline. Only emissive light areas that would glow in a game engine:
 glowing eyes, magical auras, fire, electricity, runes, neon highlights.
 Character description: ${spriteDescription}.
 Style: pixel art emission mask for HD-2D game shader. High contrast glow on pure black.`;
 
-  await generateImage({ prompt, size: '1024x1024', outputPath });
+  await generateImage({ prompt, size: '1024x1024', quality, outputPath });
   return outputPath;
 }
 
-export async function buildDepthMapBundle(framePath, spriteDescription, outDir) {
+export async function buildDepthMapBundle(framePath, spriteDescription, outDir, quality = 'medium') {
   mkdirSync(outDir, { recursive: true });
   const base = path.basename(framePath, path.extname(framePath));
 
@@ -99,7 +99,7 @@ export async function buildDepthMapBundle(framePath, spriteDescription, outDir) 
 
   await generateDepthMap(framePath, depthPath);
   await generateNormalMap(depthPath, normalPath);
-  await generateEmissionMask(spriteDescription, emissionPath);
+  await generateEmissionMask(spriteDescription, emissionPath, quality);
 
   return { diffuse: framePath, depth: depthPath, normal: normalPath, emission: emissionPath };
 }

@@ -10,11 +10,16 @@ export async function generateAnchor(form: FormData) {
   return json(res);
 }
 
-export async function generateLayers(spriteId: string, layerTypes: string[]) {
+export async function generateLayers(spriteId: string, layerTypes: string[], quality?: ImageQuality) {
   const res = await fetch(`${BASE}/generate/layers`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ spriteId, layerTypes }),
+    body: JSON.stringify({ spriteId, layerTypes, quality }),
   });
+  return json(res);
+}
+
+export async function getCycleStatus(cycleId: string) {
+  const res = await fetch(`${BASE}/generate/cycle/${cycleId}`);
   return json(res);
 }
 
@@ -68,26 +73,26 @@ export async function presetSwap(spriteId: string, presetName: string) {
   return json(res);
 }
 
-export async function buildDepthMaps(cycleId: string, frameIndex: number) {
+export async function buildDepthMaps(cycleId: string, frameIndex: number, quality?: ImageQuality) {
   const res = await fetch(`${BASE}/depth/build`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cycleId, frameIndex }),
+    body: JSON.stringify({ cycleId, frameIndex, quality }),
   });
   return json(res);
 }
 
-export async function buildBulkDepthMaps(cycleId: string) {
+export async function buildBulkDepthMaps(cycleId: string, quality?: ImageQuality) {
   const res = await fetch(`${BASE}/depth/bulk`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cycleId }),
+    body: JSON.stringify({ cycleId, quality }),
   });
   return json(res);
 }
 
-export async function createScene(spriteIds: string[], sceneStyle?: string, name?: string) {
+export async function createScene(spriteIds: string[], sceneStyle?: string, name?: string, quality?: ImageQuality) {
   const res = await fetch(`${BASE}/scene/create`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ spriteIds, sceneStyle, name }),
+    body: JSON.stringify({ spriteIds, sceneStyle, name, quality }),
   });
   return json(res);
 }

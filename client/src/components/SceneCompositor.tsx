@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { createScene } from '../api';
+import { createScene, type ImageQuality } from '../api';
+import QualitySelector from './QualitySelector';
 import type { Sprite } from '../App';
 
 const SCENE_STYLES = [
@@ -14,6 +15,7 @@ export default function SceneCompositor({ sprites }: { sprites: Sprite[] }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [quality, setQuality] = useState<ImageQuality>('medium');
 
   function toggleSprite(id: string) {
     setSelected(prev => {
@@ -27,7 +29,7 @@ export default function SceneCompositor({ sprites }: { sprites: Sprite[] }) {
   async function handleCompose() {
     if (selected.size < 2) { setError('Select at least 2 sprites'); return; }
     setError(null); setLoading(true);
-    const r = await createScene([...selected], sceneStyle, name);
+    const r = await createScene([...selected], sceneStyle, name, quality);
     setLoading(false);
     if (r.error) { setError(r.error); return; }
     setResult(r);
@@ -79,6 +81,9 @@ export default function SceneCompositor({ sprites }: { sprites: Sprite[] }) {
             value={name}
             onChange={e => setName(e.target.value)}
           />
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <QualitySelector value={quality} onChange={setQuality} label="Background Quality" disabled={loading} />
         </div>
       </div>
 

@@ -1,24 +1,26 @@
-import React, { useState } from 'react';
-import { generateCycle, regenFrame, type ImageQuality } from '../api';
+import React, { useState, useRef, useEffect } from 'react';
+import { generateCycle, regenFrame, getCycleStatus, type ImageQuality } from '../api';
+import QualitySelector from './QualitySelector';
 import type { Sprite, Cycle } from '../App';
 
-const QUALITY_OPTIONS: { id: ImageQuality; label: string; latency: string }[] = [
-  { id: 'low',    label: 'Low',    latency: '~25s/frame' },
-  { id: 'medium', label: 'Medium', latency: '~60s/frame' },
-  { id: 'high',   label: 'High',   latency: '~120s/frame' },
-  { id: 'auto',   label: 'Auto',   latency: 'model picks' },
+const CYCLES = [
+  { id: 'idle', label: 'Idle', emoji: '🧍', defaultFrames: 4 },
+  { id: 'walk', label: 'Walk', emoji: '🚶', defaultFrames: 8 },
+  { id: 'run', label: 'Run', emoji: '🏃', defaultFrames: 8 },
+  { id: 'attack', label: 'Attack', emoji: '⚔️', defaultFrames: 6 },
+  { id: 'hurt', label: 'Hurt', emoji: '💥', defaultFrames: 4 },
+  { id: 'jump', label: 'Jump', emoji: '🦘', defaultFrames: 6 },
+  { id: 'cast', label: 'Cast', emoji: '✨', defaultFrames: 8 },
+  { id: 'death', label: 'Death', emoji: '💀', defaultFrames: 6 },
 ];
 
-const CYCLES = [
-  { id: 'idle', label: 'Idle', emoji: '🧍', frames: 4 },
-  { id: 'walk', label: 'Walk', emoji: '🚶', frames: 8 },
-  { id: 'run', label: 'Run', emoji: '🏃', frames: 8 },
-  { id: 'attack', label: 'Attack', emoji: '⚔️', frames: 6 },
-  { id: 'hurt', label: 'Hurt', emoji: '💥', frames: 4 },
-  { id: 'jump', label: 'Jump', emoji: '🦘', frames: 6 },
-  { id: 'cast', label: 'Cast', emoji: '✨', frames: 8 },
-  { id: 'death', label: 'Death', emoji: '💀', frames: 6 },
-];
+interface JobState {
+  cycleId: string;
+  cycleName: string;
+  frameCount: number;
+  framesComplete: number;
+  status: 'running' | 'complete' | 'error';
+}
 
 export default function CycleLibrary({
   sprite, activeCycle, setActiveCycle, onRefresh,
@@ -28,21 +30,57 @@ export default function CycleLibrary({
   setActiveCycle: (c: Cycle) => void;
   onRefresh: () => void;
 }) {
-  const [generating, setGenerating] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFrame, setHoveredFrame] = useState<number | null>(null);
   const [regenning, setRegenning] = useState<number | null>(null);
   const [quality, setQuality] = useState<ImageQuality>('medium');
+  const [frameCount, setFrameCount] = useState<number>(8);
+  const [activeJob, setActiveJob] = useState<JobState | null>(null);
+  const pollRef = useRef<number | null>(null);
 
-  const existingCycles = new Set((sprite.cycles || []).map(c => c.cycle_name));
+  // Poll active job
+  useEffect(() => {
+    if (!activeJob || activeJob.status !== 'running') return;
+    let cancelled = false;
 
-  async function handleGenerate(cycleName: string, frameCount: number) {
-    setGenerating(cycleName);
+    async function tick() {
+      const r = await getCycleStatus(activeJob!.cycleId);
+      if (cancelled) return;
+      if (r.error) { setError(r.error); setActiveJob(null); return; }
+      setActiveJob({
+        cycleId: r.cycleId,
+        cycleName: r.cycleName,
+        frameCount: r.frameCount,
+        framesComplete: r.framesComplete ?? 0,
+        status: r.status,
+      });
+      if (r.status === 'complete') {
+        onRefresh();
+        setTimeout(() => setActiveJob(null), 1500);
+      } else if (r.status === 'error') {
+        setError(r.errorMessage || 'cycle generation failed');
+      }
+    }
+
+    pollRef.current = window.setInterval(tick, 6000);
+    tick();
+    return () => {
+      cancelled = true;
+      if (pollRef.current) window.clearInterval(pollRef.current);
+    };
+  }, [activeJob?.cycleId, activeJob?.status]);
+
+  async function handleGenerate(cycleName: string, count: number) {
     setError(null);
-    const result = await generateCycle(sprite.id, cycleName, frameCount, quality);
-    setGenerating(null);
+    const result = await generateCycle(sprite.id, cycleName, count, quality);
     if (result.error) { setError(result.error); return; }
-    onRefresh();
+    setActiveJob({
+      cycleId: result.cycleId,
+      cycleName,
+      frameCount: result.frameCount,
+      framesComplete: 0,
+      status: 'running',
+    });
   }
 
   async function handleRegen(frameIndex: number) {
@@ -53,32 +91,51 @@ export default function CycleLibrary({
     onRefresh();
   }
 
+  const generatingCycle = activeJob?.cycleName ?? null;
+
   return (
     <div style={S.root}>
       <div style={S.titleRow}>
         <h2 style={S.title}>🎬 Animation Cycles — {sprite.name}</h2>
-        <div style={S.qualitySelector}>
-          <label style={S.qualityLabel}>Quality</label>
-          <div style={S.qualityPills}>
-            {QUALITY_OPTIONS.map(q => (
-              <button
-                key={q.id}
-                style={{ ...S.qualityPill, ...(quality === q.id ? S.qualityPillActive : {}) }}
-                onClick={() => setQuality(q.id)}
-                title={q.latency}
-                disabled={!!generating}
-              >
-                {q.label}
-                <span style={S.qualityHint}>{q.latency}</span>
-              </button>
-            ))}
+        <div style={S.controls}>
+          <div style={S.frameCountWrap}>
+            <label style={S.fcLabel}>Frames</label>
+            <input
+              type="number"
+              min={1}
+              max={16}
+              value={frameCount}
+              onChange={e => setFrameCount(Math.max(1, Math.min(16, parseInt(e.target.value, 10) || 1)))}
+              disabled={!!activeJob}
+              style={S.frameCountInput}
+            />
           </div>
+          <QualitySelector value={quality} onChange={setQuality} disabled={!!activeJob} />
         </div>
       </div>
+
+      {activeJob && activeJob.status === 'running' && (
+        <div style={S.progressBar}>
+          <div style={S.progressLabel}>
+            ⏳ Generating <strong>{activeJob.cycleName}</strong> — frame {activeJob.framesComplete}/{activeJob.frameCount}
+            <span style={S.progressNote}>
+              (each frame is saved as it lands — page is safe to refresh)
+            </span>
+          </div>
+          <div style={S.progressTrack}>
+            <div style={{ ...S.progressFill, width: `${(activeJob.framesComplete / activeJob.frameCount) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      {activeJob && activeJob.status === 'complete' && (
+        <div style={S.successBar}>✅ {activeJob.cycleName} cycle complete</div>
+      )}
 
       <div style={S.cycleGrid}>
         {CYCLES.map(c => {
           const existing = sprite.cycles?.find(ec => ec.cycle_name === c.id);
+          const isGenerating = generatingCycle === c.id;
           return (
             <div
               key={c.id}
@@ -97,10 +154,10 @@ export default function CycleLibrary({
               ) : (
                 <button
                   style={S.genBtn}
-                  onClick={e => { e.stopPropagation(); handleGenerate(c.id, c.frames); }}
-                  disabled={generating === c.id}
+                  onClick={e => { e.stopPropagation(); handleGenerate(c.id, frameCount); }}
+                  disabled={!!activeJob}
                 >
-                  {generating === c.id ? '⏳ Gen...' : '+ Generate'}
+                  {isGenerating ? '⏳ Gen...' : `+ Generate (${frameCount}f)`}
                 </button>
               )}
             </div>
@@ -142,7 +199,7 @@ export default function CycleLibrary({
                     style={S.regenBtn}
                     onClick={() => handleRegen(i)}
                     disabled={regenning === i}
-                    title="Regenerate this frame"
+                    title="Regenerate this frame at the selected quality"
                   >
                     {regenning === i ? '⏳' : '🔄'}
                   </button>
@@ -151,8 +208,8 @@ export default function CycleLibrary({
             ))}
           </div>
           <div style={S.exports}>
-            <a href={activeCycle.sheetUrl} target="_blank" style={S.exportBtn}>📥 Sprite Sheet</a>
-            <a href={activeCycle.gifUrl} target="_blank" style={S.exportBtn}>🎞️ GIF</a>
+            {activeCycle.sheetUrl && <a href={activeCycle.sheetUrl} target="_blank" rel="noreferrer" style={S.exportBtn}>📥 Sprite Sheet</a>}
+            {activeCycle.gifUrl && <a href={activeCycle.gifUrl} target="_blank" rel="noreferrer" style={S.exportBtn}>🎞️ GIF</a>}
           </div>
         </div>
       )}
@@ -164,12 +221,16 @@ const S: Record<string, React.CSSProperties> = {
   root: {},
   titleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, gap: 16, flexWrap: 'wrap' },
   title: { fontSize: 22, color: '#b39dff' },
-  qualitySelector: { display: 'flex', flexDirection: 'column', gap: 6 },
-  qualityLabel: { fontSize: 11, color: '#8888aa', letterSpacing: 1, textTransform: 'uppercase' },
-  qualityPills: { display: 'flex', gap: 4, background: '#111128', border: '1px solid #7c4dff20', borderRadius: 8, padding: 4 },
-  qualityPill: { background: 'none', border: 'none', borderRadius: 6, color: '#8888aa', cursor: 'pointer', padding: '6px 12px', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 64, transition: 'all 0.15s' },
-  qualityPillActive: { background: '#2a1a5a', color: '#b39dff' },
-  qualityHint: { fontSize: 9, color: '#7c7ca0', marginTop: 2, fontWeight: 400 },
+  controls: { display: 'flex', gap: 16, alignItems: 'flex-end' },
+  frameCountWrap: { display: 'flex', flexDirection: 'column', gap: 6 },
+  fcLabel: { fontSize: 11, color: '#8888aa', letterSpacing: 1, textTransform: 'uppercase' },
+  frameCountInput: { width: 64, background: '#111128', border: '1px solid #7c4dff20', borderRadius: 8, color: '#b39dff', padding: '8px 10px', fontSize: 14, textAlign: 'center', outline: 'none' },
+  progressBar: { background: '#0d1a2d', border: '1px solid #7c4dff60', borderRadius: 10, padding: '14px 16px', marginBottom: 16 },
+  progressLabel: { color: '#b39dff', fontSize: 14, marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 },
+  progressNote: { color: '#7c7ca0', fontSize: 11, fontWeight: 400 },
+  progressTrack: { height: 6, background: '#1a1a3a', borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: '100%', background: 'linear-gradient(90deg, #7c4dff, #b39dff)', transition: 'width 0.5s ease-out' },
+  successBar: { background: '#0d2a1a', border: '1px solid #4caf5060', color: '#4caf50', borderRadius: 10, padding: '10px 16px', marginBottom: 16, fontSize: 14 },
   cycleGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 },
   cycleCard: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 10, padding: 14, cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s' },
   cycleCardActive: { border: '1px solid #7c4dff', background: '#2a1a5a' },
