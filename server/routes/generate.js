@@ -155,8 +155,9 @@ router.post('/layers', async (req, res) => {
 // ---- POST /api/generate/cycle ----
 router.post('/cycle', async (req, res) => {
   try {
-    const { spriteId, cycleName, frameCount: reqFrameCount } = req.body;
+    const { spriteId, cycleName, frameCount: reqFrameCount, quality: reqQuality } = req.body;
     if (!spriteId || !cycleName) return res.status(400).json({ error: 'spriteId and cycleName required' });
+    const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const sprite = db.prepare('SELECT * FROM sprites WHERE id = ?').get(spriteId);
@@ -172,7 +173,7 @@ router.post('/cycle', async (req, res) => {
     const cycleId = uuidv4();
     const framePaths = [];
     const scoringResults = [];
-    console.log(`[cycle] Starting ${cycleName} (${frameCount} frames) for sprite ${spriteId.slice(0,8)}`);
+    console.log(`[cycle] Starting ${cycleName} (${frameCount} frames, quality=${quality}) for sprite ${spriteId.slice(0,8)}`);
 
     // Stream progress via SSE would be ideal but for now just generate all frames
     for (let i = 0; i < frameCount; i++) {
@@ -186,6 +187,7 @@ router.post('/cycle', async (req, res) => {
         refs: [sprite.anchor_sheet_path],
         inputFidelity: 'high',
         size: '1024x1024',
+        quality,
         outputPath: framePath,
       });
 
@@ -203,6 +205,7 @@ router.post('/cycle', async (req, res) => {
             refs: [sprite.anchor_sheet_path],
             inputFidelity: 'high',
             size: '1024x1024',
+            quality,
             outputPath: regenPath,
           });
           const newScore = await scoreFrame(regenPath, anchorEmbeddings);
@@ -264,8 +267,9 @@ router.post('/cycle', async (req, res) => {
 // ---- POST /api/generate/regen-frame ----
 router.post('/regen-frame', async (req, res) => {
   try {
-    const { cycleId, frameIndex } = req.body;
+    const { cycleId, frameIndex, quality: reqQuality } = req.body;
     if (cycleId === undefined || frameIndex === undefined) return res.status(400).json({ error: 'cycleId and frameIndex required' });
+    const quality = ['low', 'medium', 'high', 'auto'].includes(reqQuality) ? reqQuality : 'medium';
 
     const db = getDb();
     const cycle = db.prepare('SELECT c.*, s.description, s.style_preset, s.anchor_embeddings, s.anchor_sheet_path FROM cycles c JOIN sprites s ON c.sprite_id=s.id WHERE c.id=?').get(cycleId);
@@ -285,6 +289,7 @@ router.post('/regen-frame', async (req, res) => {
       refs: [cycle.anchor_sheet_path],
       inputFidelity: 'high',
       size: '1024x1024',
+      quality,
       outputPath: regenPath,
     });
 

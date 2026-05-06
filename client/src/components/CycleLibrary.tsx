@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
-import { generateCycle, regenFrame } from '../api';
+import { generateCycle, regenFrame, type ImageQuality } from '../api';
 import type { Sprite, Cycle } from '../App';
+
+const QUALITY_OPTIONS: { id: ImageQuality; label: string; latency: string }[] = [
+  { id: 'low',    label: 'Low',    latency: '~25s/frame' },
+  { id: 'medium', label: 'Medium', latency: '~60s/frame' },
+  { id: 'high',   label: 'High',   latency: '~120s/frame' },
+  { id: 'auto',   label: 'Auto',   latency: 'model picks' },
+];
 
 const CYCLES = [
   { id: 'idle', label: 'Idle', emoji: '🧍', frames: 4 },
@@ -25,13 +32,14 @@ export default function CycleLibrary({
   const [error, setError] = useState<string | null>(null);
   const [hoveredFrame, setHoveredFrame] = useState<number | null>(null);
   const [regenning, setRegenning] = useState<number | null>(null);
+  const [quality, setQuality] = useState<ImageQuality>('medium');
 
   const existingCycles = new Set((sprite.cycles || []).map(c => c.cycle_name));
 
   async function handleGenerate(cycleName: string, frameCount: number) {
     setGenerating(cycleName);
     setError(null);
-    const result = await generateCycle(sprite.id, cycleName, frameCount);
+    const result = await generateCycle(sprite.id, cycleName, frameCount, quality);
     setGenerating(null);
     if (result.error) { setError(result.error); return; }
     onRefresh();
@@ -40,14 +48,33 @@ export default function CycleLibrary({
   async function handleRegen(frameIndex: number) {
     if (!activeCycle) return;
     setRegenning(frameIndex);
-    await regenFrame(activeCycle.id, frameIndex);
+    await regenFrame(activeCycle.id, frameIndex, quality);
     setRegenning(null);
     onRefresh();
   }
 
   return (
     <div style={S.root}>
-      <h2 style={S.title}>🎬 Animation Cycles — {sprite.name}</h2>
+      <div style={S.titleRow}>
+        <h2 style={S.title}>🎬 Animation Cycles — {sprite.name}</h2>
+        <div style={S.qualitySelector}>
+          <label style={S.qualityLabel}>Quality</label>
+          <div style={S.qualityPills}>
+            {QUALITY_OPTIONS.map(q => (
+              <button
+                key={q.id}
+                style={{ ...S.qualityPill, ...(quality === q.id ? S.qualityPillActive : {}) }}
+                onClick={() => setQuality(q.id)}
+                title={q.latency}
+                disabled={!!generating}
+              >
+                {q.label}
+                <span style={S.qualityHint}>{q.latency}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       <div style={S.cycleGrid}>
         {CYCLES.map(c => {
@@ -135,7 +162,14 @@ export default function CycleLibrary({
 
 const S: Record<string, React.CSSProperties> = {
   root: {},
-  title: { fontSize: 22, color: '#b39dff', marginBottom: 20 },
+  titleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 20, gap: 16, flexWrap: 'wrap' },
+  title: { fontSize: 22, color: '#b39dff' },
+  qualitySelector: { display: 'flex', flexDirection: 'column', gap: 6 },
+  qualityLabel: { fontSize: 11, color: '#8888aa', letterSpacing: 1, textTransform: 'uppercase' },
+  qualityPills: { display: 'flex', gap: 4, background: '#111128', border: '1px solid #7c4dff20', borderRadius: 8, padding: 4 },
+  qualityPill: { background: 'none', border: 'none', borderRadius: 6, color: '#8888aa', cursor: 'pointer', padding: '6px 12px', fontSize: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 64, transition: 'all 0.15s' },
+  qualityPillActive: { background: '#2a1a5a', color: '#b39dff' },
+  qualityHint: { fontSize: 9, color: '#7c7ca0', marginTop: 2, fontWeight: 400 },
   cycleGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 },
   cycleCard: { background: '#1a1a3a', border: '1px solid #7c4dff30', borderRadius: 10, padding: 14, cursor: 'pointer', textAlign: 'center', transition: 'all 0.15s' },
   cycleCardActive: { border: '1px solid #7c4dff', background: '#2a1a5a' },

@@ -18,18 +18,20 @@ export async function generateLayers(spriteId: string, layerTypes: string[]) {
   return json(res);
 }
 
-export async function generateCycle(spriteId: string, cycleName: string, frameCount?: number) {
+export type ImageQuality = 'low' | 'medium' | 'high' | 'auto';
+
+export async function generateCycle(spriteId: string, cycleName: string, frameCount?: number, quality?: ImageQuality) {
   const res = await fetch(`${BASE}/generate/cycle`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ spriteId, cycleName, frameCount }),
+    body: JSON.stringify({ spriteId, cycleName, frameCount, quality }),
   });
   return json(res);
 }
 
-export async function regenFrame(cycleId: string, frameIndex: number) {
+export async function regenFrame(cycleId: string, frameIndex: number, quality?: ImageQuality) {
   const res = await fetch(`${BASE}/generate/regen-frame`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cycleId, frameIndex }),
+    body: JSON.stringify({ cycleId, frameIndex, quality }),
   });
   return json(res);
 }
