@@ -26,7 +26,7 @@ async function refsToFiles(refPaths) {
   }));
 }
 
-async function callImageAPI({ prompt, refs, size, quality, inputFidelity, model }) {
+async function callImageAPI({ prompt, refs, size, quality, inputFidelity, model, transparent }) {
   if (refs && refs.length > 0) {
     const images = await refsToFiles(refs);
     const editParams = {
@@ -36,20 +36,25 @@ async function callImageAPI({ prompt, refs, size, quality, inputFidelity, model 
       n: 1,
       size,
       quality,
+      output_format: 'png',
     };
+    if (transparent) editParams.background = 'transparent';
     // input_fidelity is only supported on gpt-image-1 / gpt-image-1.5; gpt-image-2 rejects it.
     if (model !== 'gpt-image-2' && inputFidelity) {
       editParams.input_fidelity = inputFidelity;
     }
     return client.images.edit(editParams);
   }
-  return client.images.generate({
+  const genParams = {
     model,
     prompt,
     n: 1,
     size,
     quality,
-  });
+    output_format: 'png',
+  };
+  if (transparent) genParams.background = 'transparent';
+  return client.images.generate(genParams);
 }
 
 /**
@@ -67,18 +72,19 @@ export async function generateImage({
   inputFidelity = 'high',
   size = '1024x1024',
   quality = 'medium',
+  transparent = true,
   outputPath,
 }) {
   const hasRefs = refs && refs.length > 0;
   let resp;
   try {
-    resp = await callImageAPI({ prompt, refs, size, quality, inputFidelity, model: resolvedModel });
+    resp = await callImageAPI({ prompt, refs, size, quality, inputFidelity, model: resolvedModel, transparent });
   } catch (err) {
     if ((err.status === 404 || err.status === 400) && resolvedModel === 'gpt-image-2') {
       console.warn('[imgen] gpt-image-2 failed, falling back to gpt-image-1:', err.message);
       resolvedModel = 'gpt-image-1';
       modelLockReason = err.message;
-      resp = await callImageAPI({ prompt, refs, size, quality, inputFidelity, model: resolvedModel });
+      resp = await callImageAPI({ prompt, refs, size, quality, inputFidelity, model: resolvedModel, transparent });
     } else {
       throw err;
     }
