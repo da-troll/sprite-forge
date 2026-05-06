@@ -13,9 +13,8 @@ export const CHAT_MODEL = 'gpt-4o-mini';
 export const LIBRARY_DIR = '/home/eve/workspaces/shared/images/mvp/2026-05-06-sprite-forge/library';
 export const MEDIA_BASE = 'https://mvp.trollefsen.com/media/mvp/2026-05-06-sprite-forge/library';
 
-// 0.78 is accurate for photorealistic sprites; pixel art styles score ~0.45-0.55.
-// Tune down to 0.65 for pixel art if regen churn is too high.
-export const DINOV2_THRESHOLD = 0.78;
+// 0.65 calibrated for pixel art (scores ~0.45-0.55 baseline). Bump to 0.78 for photoreal.
+export const DINOV2_THRESHOLD = 0.65;
 export const DINOV2_REGEN_MAX = 2;
 export const TARGET_WPS = 3.4;
 

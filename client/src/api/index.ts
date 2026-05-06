@@ -1,4 +1,4 @@
-const BASE = '/api';
+const BASE = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`;
 
 async function json(res: Response) {
   const text = await res.text();
